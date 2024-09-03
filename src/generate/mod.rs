@@ -2,6 +2,7 @@ mod block;
 mod device;
 mod enumm;
 mod fieldset;
+mod rvcsr;
 
 use anyhow::Result;
 use proc_macro2::{Ident, Span, TokenStream};
@@ -109,9 +110,13 @@ pub fn render(ir: &IR, opts: &Options) -> Result<TokenStream> {
 
     for (p, b) in sorted_map(&ir.blocks, |name, _| name.clone()) {
         let (mods, _) = split_path(p);
-        root.get_by_path(&mods)
+        /* root.get_by_path(&mods)
             .items
             .extend(block::render(opts, ir, b, p)?);
+        */
+        root.get_by_path(&mods)
+            .items
+            .extend(rvcsr::render(opts, ir, b, p)?);
     }
 
     for (p, fs) in sorted_map(&ir.fieldsets, |name, _| name.clone()) {

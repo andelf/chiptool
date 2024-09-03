@@ -266,6 +266,7 @@ pub(crate) fn calc_array(mut offsets: Vec<u32>) -> (u32, Array) {
             Array::Regular(RegularArray {
                 len: offsets.len() as _,
                 stride,
+                start_index: 0,
             }),
         )
     } else {

@@ -103,6 +103,8 @@ pub enum Array {
 pub struct RegularArray {
     pub len: u32,
     pub stride: u32,
+    #[serde(default)]
+    pub start_index: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

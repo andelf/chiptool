@@ -7,15 +7,12 @@ pub struct R;
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct W;
 
-mod sealed {
-    use super::*;
-    pub trait Access {}
-    impl Access for R {}
-    impl Access for W {}
-    impl Access for RW {}
-}
+trait SealedAccess {}
+impl SealedAccess for R {}
+impl SealedAccess for W {}
+impl SealedAccess for RW {}
 
-pub trait Access: sealed::Access + Copy {}
+pub trait Access: SealedAccess + Copy {}
 impl Access for R {}
 impl Access for W {}
 impl Access for RW {}
@@ -28,47 +25,55 @@ pub trait Write: Access {}
 impl Write for RW {}
 impl Write for W {}
 
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub struct Reg<T: Copy, A: Access> {
-    ptr: *mut u8,
-    phantom: PhantomData<*mut (T, A)>,
+pub(crate) trait SealedCSR {
+    unsafe fn read_csr() -> usize;
+    unsafe fn write_csr(value: usize);
 }
-unsafe impl<T: Copy, A: Access> Send for Reg<T, A> {}
-unsafe impl<T: Copy, A: Access> Sync for Reg<T, A> {}
+pub trait CSR: SealedCSR {}
 
-impl<T: Copy, A: Access> Reg<T, A> {
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub struct Reg<T: Copy, C: CSR, A: Access> {
+    phantom: PhantomData<*mut (T, C, A)>,
+}
+unsafe impl<T: Copy, C: CSR, A: Access> Send for Reg<T, C, A> {}
+unsafe impl<T: Copy, C: CSR, A: Access> Sync for Reg<T, C, A> {}
+
+impl<T: Copy, C: CSR, A: Access> Reg<T, C, A> {
     #[allow(clippy::missing_safety_doc)]
     #[inline(always)]
-    pub const unsafe fn from_ptr(ptr: *mut T) -> Self {
+    pub(crate) const unsafe fn new() -> Self {
         Self {
-            ptr: ptr as _,
             phantom: PhantomData,
         }
     }
-
-    #[inline(always)]
-    pub const fn as_ptr(&self) -> *mut T {
-        self.ptr as _
-    }
 }
 
-impl<T: Copy, A: Read> Reg<T, A> {
+impl<T: Copy, C: CSR, A: Read> Reg<T, C, A> {
     #[inline(always)]
     pub fn read(&self) -> T {
-        unsafe { (self.ptr as *mut T).read_volatile() }
+        unsafe {
+            let mut val: T = core::mem::zeroed();
+            let out = C::read_csr() as u32;
+            (&mut val as *mut T as *mut u32).write_volatile(out);
+            val
+        }
     }
 }
 
-impl<T: Copy, A: Write> Reg<T, A> {
+impl<T: Copy, C: CSR, A: Write> Reg<T, C, A> {
     #[inline(always)]
-    pub fn write_value(&self, val: T) {
-        unsafe { (self.ptr as *mut T).write_volatile(val) }
+    pub unsafe fn write_value(&self, val: T) {
+        let mut new_val: u32 = 0;
+        unsafe {
+            (&mut new_val as *mut u32 as *mut T).write_volatile(val);
+            C::write_csr(new_val as usize)
+        }
     }
 }
 
-impl<T: Default + Copy, A: Write> Reg<T, A> {
+impl<T: Default + Copy, C: CSR, A: Write> Reg<T, C, A> {
     #[inline(always)]
-    pub fn write<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
+    pub unsafe fn write<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
         let mut val = Default::default();
         let res = f(&mut val);
         self.write_value(val);
@@ -76,9 +81,9 @@ impl<T: Default + Copy, A: Write> Reg<T, A> {
     }
 }
 
-impl<T: Copy, A: Read + Write> Reg<T, A> {
+impl<T: Copy, C: CSR, A: Read + Write> Reg<T, C, A> {
     #[inline(always)]
-    pub fn modify<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
+    pub unsafe fn modify<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
         let mut val = self.read();
         let res = f(&mut val);
         self.write_value(val);
